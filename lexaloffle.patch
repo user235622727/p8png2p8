@@ -1,0 +1,427 @@
+diff --git a/p8_compress.c b/p8_compress.c
+index 7b0897c..d75962d 100644
+--- a/p8_compress.c
++++ b/p8_compress.c
+@@ -33,16 +33,10 @@
+ 	#define MIN(x, y) (((x) < (y)) ? (x) : (y))
+ #endif
+ 
+-typedef unsigned char           uint8;
+-
+ #define HIST_LEN 4096
+ #define LITERALS 60
+ #define PICO8_CODE_ALLOC_SIZE (0x10000+1)
+ 
+-#define codo_malloc malloc
+-#define codo_free free
+-#define codo_memset memset
+-
+ // removed from end of decompressed if it exists
+ // (injected to maintain 0.1.7 forwards compatibility)
+ #define FUTURE_CODE "if(_update60)_update=function()_update60()_update60()end"
+@@ -52,7 +46,7 @@ typedef unsigned char           uint8;
+ char *literal = "^\n 0123456789abcdefghijklmnopqrstuvwxyz!#%(){}[]<>+=/*:;.,~_";
+ int literal_index[256]; // map literals to 0..LITERALS-1. 0 is reserved (not listed in literals string)
+ 
+-int find_repeatable_block(uint8 *dat, int pos, int len, int *block_offset)
++int find_repeatable_block(unsigned char *dat, int pos, int len, int *block_offset)
+ {
+ 	// block len starts from 2, so no need to record 0, 1 --> max is (15 + 2)
+ 	int max_block_len = 17; // any more doesn't have much effect for code. more important to look back further.
+@@ -96,30 +90,31 @@ int find_repeatable_block(uint8 *dat, int pos, int len, int *block_offset)
+ int num_blocks, num_blocks_large, num_literals;
+ int freq[256];
+ 
+-int compress_mini(uint8 *in_p, uint8 *out, int len)
++int compress_mini(unsigned char *in_p, unsigned char *out, int len)
+ {
+-	uint8 *p_8 = out;
++	unsigned char *p_8 = out;
+ 	int pos = 0;
+ 	int block_offset;
+ 	int block_len;
+-	int i, j, best_i;
+-	uint8 *in;
++	int i;
++//	int j, best_i;
++	unsigned char *in;
+ 	char *modified_code;
+ 	
+ 	// init literals search
+-	memset(literal_index, 0, 256);
++	memset(literal_index, 0, 256 * sizeof (int));
+ 	for (i = 1; i < LITERALS; i++)
+ 	{
+-		literal_index[literal[i]] = i;
++		literal_index[(int) literal[i]] = i;
+ 	}
+ 	
+ 	// 0.1.8 : inject future api implementation if _update60 found in in_p
+ 	// note: doesn't apply to plain .p8 format
+ 	
+-	modified_code = codo_malloc(strlen(in_p) + 1024);
+-	strcpy(modified_code, in_p);
++	modified_code = malloc(strlen((char *) in_p) + 1024);
++	strcpy(modified_code, (char *) in_p);
+ 	
+-	if (strstr(in_p, "_update60"))
++	if (strstr((char *) in_p, "_update60"))
+ 	if (len < PICO8_CODE_ALLOC_SIZE - (strlen(FUTURE_CODE2)+1)) // skip if won't fit when decompressing
+ 	{
+ 		// 0.1.9: make sure there is some whitespace before future_code (0.1.8 bug)
+@@ -131,7 +126,7 @@ int compress_mini(uint8 *in_p, uint8 *out, int len)
+ 		len += strlen(FUTURE_CODE2)+1;
+ 	}
+ 	
+-	in = modified_code;
++	in = (unsigned char *) modified_code;
+ 	
+ 	// header tag: ":c:"
+ 	// will show up in code section of old versions of pico-8
+@@ -210,27 +205,27 @@ int compress_mini(uint8 *in_p, uint8 *out, int len)
+ 	}
+ 	
+ 	// compressed is larger than input -> just return input
+-	if ((p_8 - out) >= strlen(in))
++	if ((p_8 - out) >= strlen((char *) in))
+ 	{
+-		memcpy(out, in, strlen(in));
+-		return strlen(in);
++		memcpy(out, in, strlen((char *) in));
++		return strlen((char *) in);
+ 	}
+ 	
+ 	//printf("size: %d  blocks: %d (%d large)  literals: %d\n", (p_8 - out), num_blocks, num_blocks_large, num_literals);
+ 
+-	codo_free(modified_code);
++	free(modified_code);
+ 	
+ 	return p_8 - out;
+ }
+ 
+ #define READ_VAL(val) {val = *in; in++;}
+-int decompress_mini(uint8 *in_p, uint8 *out_p, int max_len)
++int decompress_mini(unsigned char *in_p, unsigned char *out_p, int max_len)
+ {
+ 	int block_offset;
+ 	int block_length;
+ 	int val;
+-	uint8 *in = in_p;
+-	uint8 *out = out_p;
++	unsigned char *in = in_p;
++	unsigned char *out = out_p;
+ 	int len;
+ 	
+ 	// header tag ":c:"
+@@ -249,7 +244,7 @@ int decompress_mini(uint8 *in_p, uint8 *out_p, int max_len)
+ 	READ_VAL(val);
+ 	READ_VAL(val);
+ 	
+-	codo_memset(out_p, 0, max_len);
++	memset(out_p, 0, max_len);
+ 	
+ 	if (len > max_len) return 1; // corrupt data
+ 	
+@@ -291,18 +286,18 @@ int decompress_mini(uint8 *in_p, uint8 *out_p, int max_len)
+ 	// remove injected code (needed to be future compatible with PICO-8 C 0.1.7 / FILE_VERSION 8)
+ 	// older versions will leave this code intact, allowing it to implement fallback 60fps support
+ 	
+-	if (strstr(out_p, FUTURE_CODE))
+-	if (strlen(out_p)-((char *)strstr(out_p, FUTURE_CODE) - (char *)out_p) == strlen(FUTURE_CODE)) // at end
++	if (strstr((char *) out_p, FUTURE_CODE))
++	if (strlen((char *) out_p)-((char *)strstr((char *) out_p, FUTURE_CODE) - (char *)out_p) == strlen(FUTURE_CODE)) // at end
+ 	{
+-		out = out_p + strlen(out_p) - strlen(FUTURE_CODE);
++		out = out_p + strlen((char *) out_p) - strlen(FUTURE_CODE);
+ 		*out = 0;
+ 	}
+ 	
+ 	// queue circus music
+-	if (strstr(out_p, FUTURE_CODE2))
+-	if (strlen(out_p)-((char *)strstr(out_p, FUTURE_CODE2) - (char *)out_p) == strlen(FUTURE_CODE2)) // at end
++	if (strstr((char *) out_p, FUTURE_CODE2))
++	if (strlen((char *) out_p)-((char *)strstr((char *) out_p, FUTURE_CODE2) - (char *)out_p) == strlen(FUTURE_CODE2)) // at end
+ 	{
+-		out = out_p + strlen(out_p) - strlen(FUTURE_CODE2);
++		out = out_p + strlen((char *) out_p) - strlen(FUTURE_CODE2);
+ 		*out = 0;
+ 	}
+ 	
+@@ -314,12 +309,12 @@ int decompress_mini(uint8 *in_p, uint8 *out_p, int max_len)
+ void compress_test(char *fn)
+ {
+ 	FILE *f;
+-	uint8 *dat;
+-	uint8 *out;
++	unsigned char *dat;
++	unsigned char *out;
+ 	int len;
+ 	int comp_len;
+ 	int decomp_len;
+-	int i;
++//	int i;
+ 	
+ 	dat = malloc(65536);
+ 	out = malloc(65536);
+@@ -329,7 +324,7 @@ void compress_test(char *fn)
+ 	len = fread(dat, 1, 65536, f);
+ 	fclose(f);
+ 	
+-	//comp_len = codo_compress_lz4_hc(dat, out, len); // not as good as compress_mini()
++	//comp_len = compress_lz4_hc(dat, out, len); // not as good as compress_mini()
+ 	comp_len = compress_mini(dat, out, len);
+ 	
+ 	memset(dat, 0, 65536);
+@@ -350,16 +345,16 @@ void compress_test(char *fn)
+ 	
+ 	//printf("output: %s\n", dat);
+ 	f = fopen("out.txt", "wb");
+-	fwrite(dat, 1, strlen(dat), f);
++	fwrite(dat, 1, strlen((char *) dat), f);
+ 	fclose(f);
+ 	
+ 	free(dat);
+ 	free(out);
+ }
+ 
+-int main(int argc,  char *argv[])
+-{
+-	if (argc > 1)
+-		compress_test(argv[1]);
+-}
++//int main(int argc,  char *argv[])
++//{
++//	if (argc > 1)
++//		compress_test(argv[1]);
++//}
+ 
+diff --git a/pxa_compress_snippets.c b/pxa_compress_snippets.c
+index f1d3d22..01f6061 100644
+--- a/pxa_compress_snippets.c
++++ b/pxa_compress_snippets.c
+@@ -26,9 +26,13 @@
+ 
+ */
+ 
+-#include "pico8.h"
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
+ 
+ 
++extern int decompress_mini(unsigned char *in_p, unsigned char *out_p, int max_len);
++
+ 
+ // 3 3 5 4  (gives balanced trees for typical data)
+ 
+@@ -43,8 +47,12 @@
+ #define HASH_MAX 4096
+ #define MINI_HASH(pp, i) ((pp[i+0]*7 + pp[i+1]*1503 + pp[i+2]*51717) & (HASH_MAX-1))
+ 
++#ifndef MAX
++        #define MAX(x, y) (((x) > (y)) ? (x) : (y))
++        #define MIN(x, y) (((x) < (y)) ? (x) : (y))
++#endif
++
+ typedef unsigned short int uint16;
+-typedef unsigned char uint8;
+ 
+ static uint16 *hash_list[HASH_MAX];
+ static uint16 *hash_heap = NULL;
+@@ -63,8 +71,8 @@ static int src_pos = 0;
+ // pxa bit-level read/write help functions
+ //-------------------------------------------------
+ 
+-static uint8 *dest_buf = NULL;
+-static uint8 *src_buf = NULL;
++static unsigned char *dest_buf = NULL;
++static unsigned char *src_buf = NULL;
+ 
+ // 0.2.0j
+ // encode / decode as an int
+@@ -136,6 +144,7 @@ static int putval(int val, int bits)
+ 	return bits;
+ }
+ 
++/*
+ static void putbitlen(int val)
+ {
+ 	int i;
+@@ -143,11 +152,11 @@ static void putbitlen(int val)
+ 		putbit(0);
+ 	putbit(1);
+ }
+-
++*/
+ 
+ static int putchain(int val, int link_bits, int max_bits)
+ {
+-	int i;
++//	int i;
+ 	int max_link_val = (1 << link_bits) - 1; // 3 bits means can write < 7 in a single link
+ 	int bits_written = 0;
+ 	int vv = max_link_val;
+@@ -165,7 +174,7 @@ static int putchain(int val, int link_bits, int max_bits)
+ 
+ static int getchain(int link_bits, int max_bits)
+ {
+-	int i;
++//	int i;
+ 	int max_link_val = (1 << link_bits) - 1;
+ 	int val = 0;	
+ 	int vv = max_link_val;
+@@ -193,7 +202,7 @@ static int putnum(int val)
+ {
+ 	int jump = BLOCK_DIST_BITS;
+ 	int bits = jump;
+-	int i;
++//	int i;
+ 
+ 	while ((1<<bits) <= val)
+ 		bits += jump;
+@@ -212,8 +221,8 @@ static int getnum()
+ {
+ 	int jump = BLOCK_DIST_BITS;
+ 	int bits = jump;
+-	int src_pos_0 = src_pos;
+-	int bit_0 = bit;
++//	int src_pos_0 = src_pos;
++//	int bit_0 = bit;
+ 	int val;
+ 
+ 	// 1  15 bits // more frequent so put first
+@@ -234,21 +243,22 @@ static int getnum()
+ 
+ #define PXA_WRITE_VAL(x) {literal_bits_written += putval(x,8);}
+ #define PXA_READ_VAL(x)  getval(8)
+-static int pxa_find_repeatable_block(uint8 *dat, int pos, int data_len, int *block_offset, int *score_out)
++static int pxa_find_repeatable_block(unsigned char *dat, int pos, int data_len, int *block_offset, int *score_out)
+ {
+ 	int max_hist_len = 32767; // 15 bits -- super-dense carts are shorter
+-	int i, j;
++	int i;
++//	int j;
+ 	int best_len = 0;
+ 	int best_pos0 = -100000;
+ 	int max_len = data_len - pos;
+-	char *p;
+-	int skip;
++//	char *p;
++//	int skip;
+ 	int hash;
+-	int last_pos;
++//	int last_pos;
+ 	int score, dist, bit_cost, best_score = -1;
+ 	int list_pos;
+ 
+-	p = &dat[pos];
++//	p = &dat[pos];
+ 
+ 	// block length can't be longer than remaining
+ 	
+@@ -256,7 +266,7 @@ static int pxa_find_repeatable_block(uint8 *dat, int pos, int data_len, int *blo
+ 	if (max_hist_len < PXA_MIN_BLOCK_LEN) return 0;
+ 	
+ 	hash = MINI_HASH(dat, pos);
+-	last_pos = found[hash]; // most recently found match. to do: could just calculate hash ranges at start. hash_first[] hash_last[].
++//	last_pos = found[hash]; // most recently found match. to do: could just calculate hash ranges at start. hash_first[] hash_last[].
+ 
+ 	uint16 *list = hash_list[hash];
+ 
+@@ -358,7 +368,7 @@ static void init_literals_state(int *literal, int *literal_pos)
+ // pxa_build_hash_lookup: lists of occurances of hashes
+ // maybe better to just do 2 passes (calculate lengths on first pass) but this works fine.
+ // re-allocate lists into a fixed pool as they grow
+-void pxa_build_hash_lookup(uint8 *in, int len)
++void pxa_build_hash_lookup(unsigned char *in, int len)
+ {
+ 	int i;
+ 	int hash;
+@@ -426,13 +436,15 @@ void pxa_build_hash_lookup(uint8 *in, int len)
+ #define RESTORE_VLIST_STATE() memcpy(literal, literal_backup, sizeof(literal));  memcpy(literal_pos, literal_pos_backup, sizeof(literal_pos));
+ 
+ 
+-int pxa_compress(uint8 *in_p, uint8 *out, int len)
++int pxa_compress(unsigned char *in_p, unsigned char *out, int len)
+ {
+ 	int pos = 0;
+ 	int block_offset;
+ 	int block_len;
+-	int i, j, best_i;
+-	uint8 *in;
++	int i;
++//	int j;
++//	int best_i;
++	unsigned char *in;
+ 	char *modified_code;
+ 	int hash;
+ 	int block_score, literal_score;
+@@ -448,7 +460,7 @@ int pxa_compress(uint8 *in_p, uint8 *out, int len)
+ 	int raw_pos_src = 0;
+ 	int raw_pos_dest = 0;
+ 	int stored_last_segment_as_raw = 0;
+-	int raw_block_size = 0;
++//	int raw_block_size = 0;
+ 	
+ 
+ 	init_literals_state(literal, literal_pos);
+@@ -464,9 +476,9 @@ int pxa_compress(uint8 *in_p, uint8 *out, int len)
+ 	for (i = 0; i < HASH_MAX; i++)
+ 		found[i] = -1;
+ 	
+-	modified_code = codo_malloc(len);
++	modified_code = malloc(len);
+ 	memcpy(modified_code, in_p, len);
+-	in = modified_code;
++	in = (unsigned char *) modified_code;
+ 
+ 	
+ 	// appear empty in old versions of pico-8 (not relevant anymore)
+@@ -638,7 +650,7 @@ int pxa_compress(uint8 *in_p, uint8 *out, int len)
+ 				if (stored_last_segment_as_raw == 0) // write header
+ 				{
+ 					// write header marker 010 00000 00000
+-					raw_block_size = raw_size;
++//					raw_block_size = raw_size;
+ 					raw_header_write_pos = raw_block_write_pos;
+ 					set_write_pos(raw_header_write_pos);
+ 					putbit(0); putbit(1); putbit(0); putval(0, 10);
+@@ -673,7 +685,7 @@ int pxa_compress(uint8 *in_p, uint8 *out, int len)
+ 
+ 	}
+ 
+-	codo_free(modified_code);
++	free(modified_code);
+ 
+ 	// advance to next byte (and zero any junk)
+ 	while (bit != 1)
+@@ -700,9 +712,9 @@ int pxa_compress(uint8 *in_p, uint8 *out, int len)
+ }
+ 
+ 
+-int pxa_decompress(uint8 *in_p, uint8 *out_p, int max_len)
++int pxa_decompress(unsigned char *in_p, unsigned char *out_p, int max_len)
+ {
+-	uint8 *dest;
++//	unsigned char *dest;
+ 	int i;
+ 	int literal[256];
+ 	int literal_pos[256];
+@@ -806,7 +818,7 @@ int pxa_decompress(uint8 *in_p, uint8 *out_p, int max_len)
+ 	return 0;
+ }
+ 
+-int is_compressed_format_header(uint8 *dat)
++int is_compressed_format_header(unsigned char *dat)
+ {
+ 	if (dat[0] == ':' && dat[1] == 'c' && dat[2] == ':' && dat[3] == 0) return 1;
+ 	if (dat[0] == 0 && dat[1] == 'p' && dat[2] == 'x' && dat[3] == 'a') return 2;
+@@ -815,7 +827,7 @@ int is_compressed_format_header(uint8 *dat)
+ 
+ // max_len should be 0x10000 (64k max code size)
+ // out_p should allocate 0x10001 (includes null terminator)
+-int pico8_code_section_decompress(uint8 *in_p, uint8 *out_p, int max_len)
++int pico8_code_section_decompress(unsigned char *in_p, unsigned char *out_p, int max_len)
+ {
+ 	if (is_compressed_format_header(in_p) == 0) { memcpy(out_p, in_p, 0x3d00); out_p[0x3d00] = '\0'; return 0; } // legacy: no header -> is raw text
+ 	if (is_compressed_format_header(in_p) == 1) return decompress_mini(in_p, out_p, max_len);
