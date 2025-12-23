@@ -1,3 +1,4 @@
+
 #if 0
 gcc  -Wall -pedantic image2raw.c lodepng.c -o image2raw -DUSE_LODEPNG -DDO_MAIN -s && exit 0
 gcc ${0} -o ${0%.*} && ./${0%.*} && exit 0
